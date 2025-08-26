@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mini Browser</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #topbar {
+      display: flex; align-items: center;
+      padding: 5px; background: #eee; border-bottom: 1px solid #ccc;
+    }
+    #topbar button { margin: 0 2px; padding: 5px 10px; }
+    #url {
+      flex: 1; margin: 0 5px; padding: 5px; font-size: 14px;
+    }
+    #tabs {
+      display: flex; background: #ddd;
+      border-bottom: 1px solid #aaa; overflow-x: auto;
+    }
+    .tab {
+      display: flex; align-items: center;
+      padding: 5px 10px; background: #ccc;
+      margin-right: 2px; cursor: pointer;
+    }
+    .tab.active {
+      background: white; font-weight: bold;
+      border-top: 2px solid #007bff;
+    }
+    .tab button {
+      margin-left: 5px; background: transparent;
+      border: none; cursor: pointer; font-weight: bold;
+    }
+    iframe {
+      width: 100%;
+      height: calc(100vh - 90px);
+      border: none;
+      display: none;
+    }
+    iframe.active {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+<div id="topbar">
+  <button onclick="go(-1)">←</button>
+  <button onclick="go(1)">→</button>
+  <input id="url" placeholder="Enter URL and press Enter">
+  <button onclick="newTab()">＋</button>
+</div>
+
+<div id="tabs"></div>
+<div id="views"></div>
+
+<script>
+let tabs = [], cur = -1, typing = false;
+
+function $(id) { return document.getElementById(id); }
+
+function newTab(u = 'https://www.google.com/?igu=1') {
+  const i = tabs.length;
+
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.innerHTML = `Tab ${i + 1} <button onclick="closeTab(event, ${i})">×</button>`;
+  tab.onclick = () => showTab(i);
+
+  const frame = document.createElement('iframe');
+  frame.src = u;
+  frame.onload = () => {
+    tabs[i].lastUrl = frame.contentWindow.location.href;
+    injectLinkInterceptor(frame, i);
+  };
+
+  $('tabs').appendChild(tab);
+  $('views').appendChild(frame);
+
+  tabs.push({ tab, frame, lastUrl: u });
+  showTab(i);
+}
+
+function showTab(i) {
+  tabs.forEach((t, j) => {
+    t.frame.classList.toggle('active', i === j);
+    t.tab.classList.toggle('active', i === j);
+  });
+  cur = i;
+  updateURLBar(true); // Force update when switching
+}
+
+function closeTab(e, i) {
+  e.stopPropagation();
+  tabs[i].frame.remove();
+  tabs[i].tab.remove();
+  tabs.splice(i, 1);
+  if (tabs.length === 0) {
+    cur = -1;
+    $('url').value = '';
+  } else {
+    showTab(Math.max(0, i - (i === cur ? 1 : 0)));
+  }
+}
+
+function go(d) {
+  const f = tabs[cur]?.frame?.contentWindow?.history;
+  d === 1 ? f.forward?.() : f.back?.();
+}
+
+$('url').addEventListener('keydown', e => {
+  typing = true;
+  if (e.key === 'Enter' && cur !== -1) {
+    let val = $('url').value.trim();
+    if (!/^https?:\/\//.test(val)) val = 'https://' + val;
+    tabs[cur].frame.src = val;
+    tabs[cur].lastUrl = ''; // force update
+    typing = false;
+  }
+});
+
+$('url').addEventListener('focus', () => typing = true);
+$('url').addEventListener('blur', () => typing = false);
+
+function updateURLBar(force = false) {
+  const current = tabs[cur];
+  if (!current || typing) return;
+
+  try {
+    const newURL = current.frame.contentWindow.location.href;
+    if (force || newURL !== current.lastUrl) {
+      current.lastUrl = newURL;
+      $('url').value = newURL;
+    }
+  } catch {
+    // Cross-origin, fallback
+    $('url').value = current.frame.src;
+  }
+}
+
+setInterval(() => updateURLBar(false), 1000);
+
+// Intercept links inside iframe to open in a new tab
+function injectLinkInterceptor(iframe, tabIndex) {
+  try {
+    const doc = iframe.contentDocument || iframe.contentWindow.document;
+    const win = iframe.contentWindow;
+
+    // Open all clicks in new tab
+    doc.querySelectorAll('a[href]').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const url = a.href;
+        newTab(url);
+      });
+    });
+
+    // Hook history changes
+    const originalPush = win.history.pushState;
+    win.history.pushState = function(...args) {
+      originalPush.apply(win.history, args);
+      updateURLBar(true);
+    };
+    const originalReplace = win.history.replaceState;
+    win.history.replaceState = function(...args) {
+      originalReplace.apply(win.history, args);
+      updateURLBar(true);
+    };
+
+  } catch (e) {
+    // Cross-origin iframe (e.g., Google) can't be modified
+  }
+}
+
+newTab(); // Initial tab
+</script>
+
+</body>
+</html>
